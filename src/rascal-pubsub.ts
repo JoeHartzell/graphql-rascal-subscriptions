@@ -12,9 +12,7 @@ export interface PubSubRascalOptions {
 }
 
 export class RascalPubSub implements PubSubEngine {
-    constructor(options: PubSubRascalOptions = {}) {
-        const { brokerConfig, connectionListener } = options
-
+    constructor({ brokerConfig, connectionListener }: PubSubRascalOptions = {}) {
         this.brokerConfig = brokerConfig
         this.connectionListener = connectionListener
     }
@@ -36,7 +34,7 @@ export class RascalPubSub implements PubSubEngine {
         await (await this.broker).publish(triggerName, payload)
     }
 
-    async subscribe<T>(triggerName: string, handler: Handler<T>, options: Object): Promise<number> {
+    async subscribe<T>(triggerName: string, handler: Handler<T>, options?: Object): Promise<number> {
         const broker = await this.broker
         const id = this.currentSubscriptionId++
 
@@ -44,7 +42,7 @@ export class RascalPubSub implements PubSubEngine {
         const subscriptionRef = this.subscriptionMap.get(triggerName)
         if (subscriptionRef === undefined) {
             // create our rascal subscription
-            const subscription = await broker.subscribe(triggerName)
+            const subscription = await broker.subscribe(triggerName, options)
             subscription.on('message', (message, content, ackOrNack) => this.onMessage(message, content, ackOrNack, triggerName))
             subscription.on('error', this.connectionListener ?? console.error)
 

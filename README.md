@@ -19,7 +19,7 @@ Expect the README to be updated fequently has we approach version 1.0.0
 - [ ] Add subscription manager usage to README
 - [ ] Add installation to README
 - [ ] Add configuration usage to README
-- [ ] First publish to NPM
+- [X] First publish to NPM
 
 ## Contributing
 

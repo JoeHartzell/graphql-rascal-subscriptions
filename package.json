@@ -1,12 +1,12 @@
 {
   "name": "graphql-rascal-subscriptions",
-  "version": "0.0.0",
-  "description": "RabbitMQ graphql-subscriptions implementation",
-  "main": "index.js",
+  "version": "0.0.2",
+  "description": "RabbitMQ graphql-subscriptions implementation using Rascal",
   "repository": "https://github.com/JoeHartzell/graphql-rascal-subscriptions.git",
   "author": "Joe Hartzell",
   "scripts": {
-    "test": "mocha -r ts-node/register tests/**/*.spec.ts"
+    "test": "mocha -r ts-node/register tests/**/*.spec.ts",
+    "build": "tsc"
   },
   "keywords": [
     "graphql",
@@ -15,19 +15,31 @@
     "subscriptions",
     "graphql-modules"
   ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "license": "MIT",
+  "peerDependencies": {
+    "graphql-subscriptions": "^1.1.0"
+  },
   "devDependencies": {
     "@types/chai": "^4.2.11",
     "@types/mocha": "^7.0.2",
     "@types/node": "^14.0.13",
     "@types/rascal": "^10.0.1",
+    "graphql-subscriptions": "^1.1.0",
     "chai": "^4.2.0",
     "eslint": "^7.2.0",
     "graphql": "^15.1.0",
-    "graphql-subscriptions": "^1.1.0",
-    "mocha": "^7.2.0",
     "rascal": "^10.0.0",
+    "mocha": "^7.2.0",
     "ts-node": "^8.10.2",
     "typescript": "^3.9.5"
+  },
+  "optionalDependencies": {
+    "rascal": "^10.0.0"
+  },
+  "typings": "dist/index.d.ts",
+  "typescript": {
+    "definition": "dist/index.d.ts"
   }
 }
