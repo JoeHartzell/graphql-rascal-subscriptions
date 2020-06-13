@@ -20,22 +20,19 @@ export class RascalPubSub implements PubSubEngine {
     /**
      * Getter used to lazily start/configure the Rascal broker.
      */
-    get broker(): Promise<Broker> {
+    async getBroker(): Promise<Broker> {
         if (this._broker !== undefined) return Promise.resolve(this._broker)
-
-        return (async (): Promise<Broker> => {
-            this._broker = await Broker.create(this.brokerConfig)
-            this._broker.on('error', this.connectionListener ?? console.error)
-            return this._broker
-        })()
+        this._broker = await Broker.create(this.brokerConfig)
+        this._broker.on('error', this.connectionListener ?? console.error)
+        return this._broker
     }
 
     async publish<T>(triggerName: string, payload: T): Promise<void> {
-        await (await this.broker).publish(triggerName, payload)
+        await (await this.getBroker()).publish(triggerName, payload)
     }
 
     async subscribe<T>(triggerName: string, handler: Handler<T>, options?: Object): Promise<number> {
-        const broker = await this.broker
+        const broker = await this.getBroker()
         const id = this.currentSubscriptionId++
 
         // check for a missing subscription map for the given trigger
@@ -80,6 +77,10 @@ export class RascalPubSub implements PubSubEngine {
                 delete refs[subId]
             }
         }
+    }
+
+    async close() {
+        await (await this.getBroker()).shutdown()
     }
 
     asyncIterator<T>(triggers: string | string[]): AsyncIterator<T, any, undefined> {

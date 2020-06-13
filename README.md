@@ -17,9 +17,23 @@ Expect the README to be updated fequently has we approach version 1.0.0
 - [ ] Tests, Tests, Tests
 - [ ] Add graphql-module usage to README
 - [ ] Add subscription manager usage to README
-- [ ] Add installation to README
+- [X] Add installation to README
 - [ ] Add configuration usage to README
 - [X] First publish to NPM
+
+## Installation
+
+Start by installing the `graphql-rascal-subscriptions` package
+
+```
+npm i graphql-rascal-subscriptions
+```
+
+Since [graphql-subscriptions](https://github.com/apollographql/graphql-subscriptions) is declared as a peer dependency, you may also need to install it as well. This is only if you see a warning for the unmet peer dependency
+
+```
+npm i graphql-subscriptions
+```
 
 ## Contributing
 
