@@ -118,13 +118,99 @@ describe('RascalPubSub', () => {
 
         const subIds = [await pubsub.subscribe('Posts', onMessageSpy), await pubsub.subscribe('Posts', onMessageSpy)]
 
-        expect(subIds.length).to.be.equal(2)
-
         await pubsub.publish('Posts', 'test')
 
+        expect(subIds.length).to.be.equal(2)
         expect(onMessageSpy.callCount).to.equal(2)
         onMessageSpy.calls.forEach((call) => {
             expect(call.args).to.have.members(['test', ackOrNackSpy])
         })
+    })
+
+    it('should handle primitive messages', async () => {
+        const pubsub = new RascalPubSub()
+        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
+
+        const string = 'string'
+        const date = new Date()
+        const bool = true
+        const number = 100
+        const symbol = Symbol('symbol')
+
+        const subIds = []
+
+        subIds.push(
+            await pubsub.subscribe('string', (message) => {
+                expect(message).to.equal(string)
+            })
+        )
+
+        await pubsub.publish('string', string)
+
+        subIds.push(
+            await pubsub.subscribe('date', (message) => {
+                expect(message).to.equal(date)
+            })
+        )
+
+        await pubsub.publish('date', date)
+
+        subIds.push(
+            await pubsub.subscribe('bool', (message) => {
+                expect(message).to.equal(bool)
+            })
+        )
+
+        await pubsub.publish('bool', bool)
+
+        subIds.push(
+            await pubsub.subscribe('number', (message) => {
+                expect(message).to.equal(number)
+            })
+        )
+
+        await pubsub.publish('number', number)
+
+        subIds.push(
+            await pubsub.subscribe('undefined', (message) => {
+                expect(message).to.equal(undefined)
+            })
+        )
+
+        await pubsub.publish('undefined', undefined)
+
+        subIds.push(
+            await pubsub.subscribe('symbol', (message) => {
+                expect(message).to.equal(symbol)
+            })
+        )
+
+        await pubsub.publish('symbol', symbol)
+
+        await Promise.all(subIds.map(pubsub.unsubscribe.bind(pubsub)))
+
+        expect(cancelSubscriptionSpy.callCount).to.be.equal(6)
+        expect(subscribeSpy.callCount).to.be.equal(6)
+        expect(publishSpy.callCount).to.be.equal(6)
+    })
+
+    it('should handle object messages', async () => {
+        const payload = {
+            message: 'testing',
+            date: new Date(),
+        }
+        const pubsub = new RascalPubSub()
+        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
+
+        const subId = await pubsub.subscribe('Posts', (message) => {
+            expect(message).to.equal(payload)
+        })
+
+        await pubsub.publish('Posts', payload)
+        await pubsub.unsubscribe(subId)
+
+        expect(cancelSubscriptionSpy.callCount).to.be.equal(1)
+        expect(publishSpy.callCount).to.be.equal(1)
+        expect(subscribeSpy.callCount).to.be.equal(1)
     })
 })
