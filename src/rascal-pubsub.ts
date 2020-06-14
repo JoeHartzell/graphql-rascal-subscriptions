@@ -1,6 +1,7 @@
 import { BrokerConfig, SubscriptionSession, BrokerAsPromised as Broker, AckOrNack } from 'rascal'
 import { PubSubEngine } from 'graphql-subscriptions'
 import { Message } from 'amqplib'
+import { PubSubAsyncIterator } from './pubsub-async-iterator'
 
 type SubscriptionMap = Map<string, { subscription: SubscriptionSession; refs: { [id: number]: Handler<any> } }>
 
@@ -45,6 +46,8 @@ export class RascalPubSub implements PubSubEngine {
 
             // create our refs for the subscription mapping
             const refs = {
+                // need to check this again in case we are concurrently subscribing
+                ...(this.subscriptionMap.get(triggerName) || { refs: {} }).refs,
                 [id]: handler,
             }
 
@@ -83,16 +86,14 @@ export class RascalPubSub implements PubSubEngine {
         await (await this.getBroker()).shutdown()
     }
 
-    asyncIterator<T>(triggers: string | string[]): AsyncIterator<T, any, undefined> {
-        throw new Error('Method not implemented.')
+    asyncIterator<T>(triggers: string | string[], options?: Object): AsyncIterator<T, any, undefined> {
+        return new PubSubAsyncIterator<T>(this, triggers, options)
     }
 
     private onMessage(message: Message, content: any, ackOrNack: AckOrNack, triggerName: string) {
         const { refs } = this.subscriptionMap.get(triggerName)
 
-        for (const handler of Object.values(refs)) {
-            handler(content, ackOrNack)
-        }
+        Object.values(refs).forEach((handler) => handler(content, ackOrNack))
     }
 
     /**

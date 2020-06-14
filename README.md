@@ -13,7 +13,7 @@ Expect the README to be updated fequently has we approach version 1.0.0
 ### Tasks
 
 - [X] Implement PubSubEngine
-- [ ] Implement AsyncIterator
+- [X] Implement AsyncIterator
 - [ ] Tests, Tests, Tests
 - [ ] Add graphql-module usage to README
 - [ ] Add subscription manager usage to README
