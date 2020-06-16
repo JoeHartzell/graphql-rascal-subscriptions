@@ -1,4 +1,4 @@
-import { BrokerConfig, SubscriptionSession, BrokerAsPromised as Broker, AckOrNack } from 'rascal'
+import { BrokerConfig, SubscriptionSession, BrokerAsPromised as Broker, AckOrNack, BrokerAsPromised } from 'rascal'
 import { PubSubEngine } from 'graphql-subscriptions'
 import { PubSubAsyncIterator } from './pubsub-async-iterator'
 
@@ -6,23 +6,65 @@ type SubscriptionMap = Map<number, SubscriptionSession>
 
 export type ConnectionListener = (err: Error) => void
 export type Handler<T> = (payload: T, ackOrNack: AckOrNack) => void
+export type Deserializer = (source: string) => any
+export type Reviver = (key: any, value: any) => any
+
+/**
+ * Options for creating a RascalPubSub
+ */
 export interface PubSubRascalOptions {
+    /**
+     * @type {BrokerConfig}
+     * Rascal broker configuration
+     */
     brokerConfig?: BrokerConfig
+
+    /**
+     * @type {ConnectionListener}
+     * Listener to publish errors too
+     */
     connectionListener?: ConnectionListener
+
+    /**
+     * @type {Deserializer}
+     * Function used to deserialize messages
+     */
+    deserializer?: Deserializer
+
+    /**
+     * @type {Reviver}
+     * Reviver used for reviving messages using JSON.parse
+     */
+    reviver?: Reviver
 }
 
+/**
+ * @class
+ * A class implementing the PubSubEngine for use with Rabbitmq and Rascal
+ */
 export class RascalPubSub implements PubSubEngine {
     /**
+     * @constructor
      *
-     * @param options
+     * @param options @type {PubSubRascalOptions}
+     * Options used for configuring the PubSubEngine
      */
-    constructor({ brokerConfig, connectionListener }: PubSubRascalOptions = {}) {
+    constructor({ brokerConfig, connectionListener, deserializer, reviver }: PubSubRascalOptions = {}) {
+        if (reviver && deserializer) {
+            throw new Error("Reviver and deserializer can't be used together")
+        }
+
         this.brokerConfig = brokerConfig
         this.connectionListener = connectionListener
+        this.deserializer = deserializer
+        this.reviver = reviver
     }
 
     /**
      * Getter used to lazily start/configure the Rascal broker.
+     *
+     * @returns @type {Promise<Broker>}
+     * A promise of a Broker
      */
     async getBroker(): Promise<Broker> {
         // check if the broker was already initialized
@@ -39,8 +81,12 @@ export class RascalPubSub implements PubSubEngine {
 
     /**
      * Publishes a message to a Rascal publication
-     * @param publication Rascal publication name
-     * @param payload Message payload
+     *
+     * @param publication @type {string}
+     * Rascal publication name
+     *
+     * @param payload @type {T}
+     * Message payload
      */
     async publish<T>(publication: string, payload: T): Promise<void> {
         await (await this.getBroker()).publish(publication, payload)
@@ -48,9 +94,18 @@ export class RascalPubSub implements PubSubEngine {
 
     /**
      * Subscribes to a Rascal subscription
-     * @param subscription Rascal subscription name
-     * @param handler Listener that will handle the messages for the subscription
-     * @param options Rascal subscription options
+     *
+     * @param subscription @type {string}
+     * Rascal subscription name
+     *
+     * @param handler @type {Handler<T>}
+     * Listener that will handle the messages for the subscription
+     *
+     * @param options @type {Object}
+     * Rascal subscription options
+     *
+     * @returns @type {Promise<number>}
+     * Subscription ID
      */
     async subscribe<T>(subscription: string, handler: Handler<T>, options?: Object): Promise<number> {
         // get our subscription id
@@ -60,7 +115,25 @@ export class RascalPubSub implements PubSubEngine {
 
         // wire up our message listener
         // wire up our connection listener
-        sub.on('message', (_, content, ackOrNack) => handler(content, ackOrNack))
+        sub.on('message', (message, content, ackOrNack) => {
+            let parsedMessage: T
+
+            // try parse our message using the provided
+            // deserializer/reviver
+            // default to the 'content' if parsing fails
+            try {
+                parsedMessage = this.deserializer
+                    ? this.deserializer(message.content.toString())
+                    : JSON.parse(message.content.toString(), this.reviver)
+            } catch {
+                parsedMessage = content
+            }
+
+            // call the handler
+            handler(parsedMessage, ackOrNack)
+        })
+
+        // wire up our connection listener
         sub.on('error', this.connectionListener ?? console.error)
 
         // check if we are already subscribed
@@ -79,7 +152,9 @@ export class RascalPubSub implements PubSubEngine {
 
     /**
      * Unsubscribe from a Rascal subscription using the subscription ID
-     * @param subId Subscription ID
+     *
+     * @param subId @type {number}
+     * Subscription ID
      */
     async unsubscribe(subId: number) {
         const subscription = this.subscriptionMap.get(subId)
@@ -106,31 +181,48 @@ export class RascalPubSub implements PubSubEngine {
         this.subscriptionMap.clear()
     }
 
-    asyncIterator<T>(triggers: string | string[], options?: Object): AsyncIterator<T, any, undefined> {
+    asyncIterator<T>(triggers: string | string[], options?: Object): AsyncIterator<T> {
         return new PubSubAsyncIterator<T>(this, triggers, options)
     }
 
     /**
+     * @type {Deserializer}
+     * Function used to deserialize messages
+     */
+    private deserializer?: Deserializer
+
+    /**
+     * @type {Reviver}
+     * Reviver used for reviving messages using JSON.parse
+     */
+    private reviver?: Reviver
+
+    /**
+     * @type {ConnectionListener}
      * Listener to publish errors too
      */
     private connectionListener?: ConnectionListener
 
     /**
+     * @type {BrokerConfig}
      * Rascal broker configuration
      */
     private brokerConfig?: BrokerConfig
 
     /**
+     * @type {number}
      * Keeps track of the current subscription ID.
      */
     private currentSubscriptionId: number = 0
 
     /**
+     * @type {BrokerAsPromised}
      * Backer field that holds the Rascal broker.
      */
     private _broker: Broker
 
     /**
+     * @type {SubscriptionMap}
      * Mapping of triggers to their Rascal subscription and subscriber IDs
      */
     private subscriptionMap: SubscriptionMap = new Map<number, SubscriptionSession>()

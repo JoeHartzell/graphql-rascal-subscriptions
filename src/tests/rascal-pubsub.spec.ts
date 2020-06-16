@@ -1,250 +1,284 @@
 import 'mocha'
+import { withTestConfig, SubscriptionSession } from 'rascal'
 import { expect } from 'chai'
-import { mock, spy, restore } from 'simple-mock'
+import { forAwaitEach } from 'iterall'
+import { mock, spy, restore, stub } from 'simple-mock'
 import { RascalPubSub } from '../rascal-pubsub'
 import { isAsyncIterable } from 'iterall'
 
-/* TODO:
- * In the tests below there are some setTimeout(() => {}, 0) methods. These are too ensure that the publishing
- * of the event occurs after the asyncIterator.next has been called. This is because if publish is called before .next is executed,
- * the iterator will miss the publish.
- *
- * Need to determine if this is intended functionality, or if setTimeout is acting as a hack
- */
+const wait = (timeout: number) => new Promise((resolve) => setTimeout(resolve, timeout))
 
-// Mocking Rascal broker
-let listener
-
-const cancelSubscriptionSpy = spy((name) => {})
-const ackOrNackSpy = spy(() => {})
-const subscribeSpy = spy((subscription, options) => ({
-    on: (event, cb) => {
-        if (event === 'message') {
-            listener = cb
-        }
+const brokerConfig = withTestConfig({
+    vhosts: {
+        '/': {
+            queues: ['Posts', 'Authors'],
+            publications: {
+                Posts: {
+                    queue: 'Posts',
+                },
+                Authors: {
+                    queue: 'Authors',
+                },
+            },
+            subscriptions: {
+                Posts: {
+                    queue: 'Posts',
+                },
+                Authors: {
+                    queue: 'Authors',
+                },
+            },
+        },
     },
-    cancel: () => cancelSubscriptionSpy(subscription),
-}))
-
-const publishSpy = spy((name, payload) => listener && listener(null, payload, ackOrNackSpy))
-const mockRascalBroker = {
-    subscribe: subscribeSpy,
-    publish: publishSpy,
-}
+})
 
 describe('RascalPubSub', () => {
-    afterEach('Reset spy count', () => {
-        cancelSubscriptionSpy.reset()
-        ackOrNackSpy.reset()
-        subscribeSpy.reset()
-        publishSpy.reset()
-    })
-
     after('Restore mocks', () => {
         restore()
     })
 
     it('should verify calling close shuts down the broker', async () => {
-        const pubsub = new RascalPubSub()
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig })
+        // setup spies
         const broker = await pubsub.getBroker()
         const shutdownSpy = mock(broker, 'shutdown')
+        // cleanup
         await pubsub.close()
 
+        // asserts
         expect(shutdownSpy.called).to.be.true
     })
 
     it('should create default Rascal client if none were provided', async () => {
-        const pubsub = new RascalPubSub()
-
-        expect(await pubsub.getBroker()).to.be.not.undefined
-
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig })
+        // cleanup
         await pubsub.close()
+
+        // asserts
+        expect(await pubsub.getBroker()).to.be.not.undefined
     })
 
-    it('can subscribe to a Rascal subscription and called when published to', async () => {
-        const pubSub = new RascalPubSub()
-        mock(pubSub, 'getBroker').resolveWith(mockRascalBroker)
+    it('can subscribe to a Rascal subscription', async () => {
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig })
+        // setup spies
+        const broker = await pubsub.getBroker()
+        const subscribeSpy = mock(broker, 'subscribe')
+        // call subscribe
+        const id = await pubsub.subscribe('Posts', () => undefined)
+        // cleanup
+        await pubsub.close()
 
-        const id = await pubSub.subscribe('Posts', (payload, ackOrNack) => {
-            expect(payload).to.equal('test')
-        })
-
-        await pubSub.publish('Posts', 'test')
-
+        // asserts
         expect(id).to.be.a('number')
-    })
-
-    it('can unsubscribe from a Rascal subscription', async () => {
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-
-        const id = await pubsub.subscribe('Posts', () => null)
-
-        await pubsub.unsubscribe(id)
-
-        expect(cancelSubscriptionSpy.callCount).to.equal(1)
-        expect(cancelSubscriptionSpy.lastCall.args).to.have.members(['Posts'])
-    })
-
-    it('will not unsubscribe from a subscription if there is more than one subscriber', async () => {
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-
-        const subIds = [
-            await pubsub.subscribe('Posts', () => null),
-            await pubsub.subscribe('Posts', (payload) => {
-                expect(payload).to.equal('test')
-            }),
-        ]
-
-        expect(subIds.length).to.equal(2)
-
-        await pubsub.unsubscribe(subIds[1])
-        expect(cancelSubscriptionSpy.callCount).to.be.equal(0)
-
-        await pubsub.publish('Posts', 'test')
-
-        await pubsub.unsubscribe(subIds[0])
-        expect(cancelSubscriptionSpy.callCount).to.be.equal(1)
-    })
-
-    it('will subscribe to Rascal subscription only once', async () => {
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-
-        const subIds = [await pubsub.subscribe('Posts', () => null), await pubsub.subscribe('Posts', () => null)]
-
-        expect(subIds.length).to.equal(2)
         expect(subscribeSpy.callCount).to.equal(1)
     })
 
-    it('can have multiple subscribers and all will be called when published', async () => {
+    it('can unsubscribe from a Rascal subscription', async () => {
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig })
+        // setup spies
+        const broker = await pubsub.getBroker()
+        const subscribeSpy = mock(broker, 'subscribe')
+        // subscribe
+        const id = await pubsub.subscribe('Posts', () => null)
+        // more spies
+        const unsubscribeSpy = mock(await subscribeSpy.lastCall.returned, 'cancel')
+        // call unsubscribe
+        await pubsub.unsubscribe(id)
+
+        // cleanup
+        await pubsub.close()
+
+        // asserts
+        expect(subscribeSpy.callCount).to.equal(1)
+        expect(unsubscribeSpy.callCount).to.equal(1)
+    })
+
+    it('can subscribe to a Rascal subscription and called when published to', async () => {
+        // setup pubsub
+        const pubSub = new RascalPubSub({ brokerConfig })
+        // setup spies
+        const onMessageSpy = spy(() => undefined)
+        const broker = await pubSub.getBroker()
+        const subscribeSpy = mock(broker, 'subscribe')
+        // call subscribe
+        const id = await pubSub.subscribe('Posts', onMessageSpy)
+        // publish a message
+        await pubSub.publish('Posts', 'test')
+        // cleanup
+        await pubSub.close()
+
+        // asserts
+        expect(id).to.be.a('number')
+        expect(subscribeSpy.callCount).to.equal(1)
+        expect(onMessageSpy.callCount).to.equal(1)
+        expect(onMessageSpy.lastCall.args[0]).to.equal('test')
+    })
+
+    it('should not allow double subscribing to a Rascal subscription', async () => {
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig })
+        // spies
         const onMessageSpy = spy(() => null)
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
+        const broker = await pubsub.getBroker()
+        const subscribeSpy = mock(broker, 'subscribe')
 
-        const subIds = await Promise.all([pubsub.subscribe('Posts', onMessageSpy), pubsub.subscribe('Posts', onMessageSpy)])
+        try {
+            // subscribe to a subscription twice
+            // should error
+            expect(await Promise.all([pubsub.subscribe('Posts', onMessageSpy), pubsub.subscribe('Posts', onMessageSpy)])).to.throw(
+                'Already subscribed to this subscription'
+            )
+        } catch {}
 
-        await pubsub.publish('Posts', 'test')
+        // clean up
+        await pubsub.close()
 
-        expect(subIds.length).to.be.equal(2)
-        expect(onMessageSpy.callCount).to.equal(2)
-        onMessageSpy.calls.forEach((call) => {
-            expect(call.args).to.have.members(['test', ackOrNackSpy])
-        })
+        // assert
+        expect(subscribeSpy.callCount).to.be.equal(2)
     })
 
     it('should handle primitive messages', async () => {
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig })
+        // spies
+        const onMessageSpy = spy(() => null)
+        // payloads
         const string = 'string'
-        const date = new Date()
         const bool = true
         const number = 100
-        const symbol = Symbol('symbol')
 
-        const subIds = []
+        await pubsub.subscribe('Posts', onMessageSpy)
 
-        subIds.push(
-            await pubsub.subscribe('string', (message) => {
-                expect(message).to.equal(string)
-            })
-        )
+        await pubsub.publish('Posts', string)
+        await pubsub.publish('Posts', bool)
+        await pubsub.publish('Posts', number)
 
-        await pubsub.publish('string', string)
+        // wait for our messages to publish
+        await wait(50)
 
-        subIds.push(
-            await pubsub.subscribe('date', (message) => {
-                expect(message).to.equal(date)
-            })
-        )
+        // cleanup
+        await pubsub.close()
 
-        await pubsub.publish('date', date)
-
-        subIds.push(
-            await pubsub.subscribe('bool', (message) => {
-                expect(message).to.equal(bool)
-            })
-        )
-
-        await pubsub.publish('bool', bool)
-
-        subIds.push(
-            await pubsub.subscribe('number', (message) => {
-                expect(message).to.equal(number)
-            })
-        )
-
-        await pubsub.publish('number', number)
-
-        subIds.push(
-            await pubsub.subscribe('undefined', (message) => {
-                expect(message).to.equal(undefined)
-            })
-        )
-
-        await pubsub.publish('undefined', undefined)
-
-        subIds.push(
-            await pubsub.subscribe('symbol', (message) => {
-                expect(message).to.equal(symbol)
-            })
-        )
-
-        await pubsub.publish('symbol', symbol)
-
-        await Promise.all(subIds.map(pubsub.unsubscribe.bind(pubsub)))
-
-        expect(cancelSubscriptionSpy.callCount).to.be.equal(6)
-        expect(subscribeSpy.callCount).to.be.equal(6)
-        expect(publishSpy.callCount).to.be.equal(6)
+        // asserts
+        expect(onMessageSpy.callCount).to.equal(3)
+        expect(onMessageSpy.calls[0].args[0]).to.equal(string)
+        expect(onMessageSpy.calls[1].args[0]).to.equal(bool)
+        expect(onMessageSpy.calls[2].args[0]).to.equal(number)
     })
 
     it('should handle object messages', async () => {
-        const payload = {
-            message: 'testing',
-            date: new Date(),
-        }
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-
-        const subId = await pubsub.subscribe('Posts', (message) => {
-            expect(message).to.equal(payload)
-        })
-
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig })
+        // spies
+        const onMessageSpy = spy(() => null)
+        const payload = { message: 'testing' }
+        // subscribe
+        await pubsub.subscribe('Posts', onMessageSpy)
+        // publish a message
         await pubsub.publish('Posts', payload)
-        await pubsub.unsubscribe(subId)
+        // cleanup
+        await pubsub.close()
 
-        expect(cancelSubscriptionSpy.callCount).to.be.equal(1)
-        expect(publishSpy.callCount).to.be.equal(1)
-        expect(subscribeSpy.callCount).to.be.equal(1)
+        // asserts
+        expect(onMessageSpy.callCount).to.equal(1)
+        expect(onMessageSpy.lastCall.args[0]).to.eqls(payload)
     })
 
     it('should support subscribing and unsubscribing using Promise.All', async () => {
-        const pubsub = new RascalPubSub()
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig })
+        // spies
+        const broker = await pubsub.getBroker()
+        const subscribeSpy = mock(broker, 'subscribe')
         const onMessageSpy = spy(() => null)
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-
-        const subIds = await Promise.all([
-            pubsub.subscribe('Posts', onMessageSpy),
-            pubsub.subscribe('Posts', onMessageSpy),
-            pubsub.subscribe('Author', onMessageSpy),
-        ])
-
+        // subscribe using Promise.all
+        const subIds = await Promise.all([pubsub.subscribe('Posts', onMessageSpy), pubsub.subscribe('Authors', onMessageSpy)])
+        // unsubscribe using Promise.all
         await Promise.all(subIds.map(pubsub.unsubscribe.bind(pubsub)))
+        // cleanup
+        await pubsub.close()
 
-        expect(subIds.length).to.be.equal(3)
-        expect(subscribeSpy.callCount).to.be.equal(3)
-        expect(cancelSubscriptionSpy.callCount).to.be.equal(2)
+        // asserts
+        expect(subIds.length).to.be.equal(2)
+        expect(subscribeSpy.callCount).to.be.equal(2)
+
+        // checking an internal method
+        expect((<any>pubsub).subscriptionMap.size).to.equal(0)
+    })
+
+    it('refuses custom reviver with a deserializer', async () => {
+        const reviver = stub()
+        const deserializer = stub()
+
+        try {
+            expect(new RascalPubSub({ brokerConfig, reviver, deserializer })).to.throw("Reviver and deserializer can't be used together")
+        } catch {}
+    })
+
+    it('allows use of a custom deserializer', async () => {
+        // spies
+        const onMessageSpy = spy(() => null)
+        const payload = { message: 'this is great' }
+        const deserializer = stub().returnWith(payload)
+
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig, deserializer })
+        // subscribe
+        // publish a message
+        await pubsub.subscribe('Posts', onMessageSpy)
+        await pubsub.publish('Posts', null)
+        // cleanup
+        await pubsub.close()
+
+        // asserts
+        expect(deserializer.callCount).to.equal(1)
+        expect(onMessageSpy.callCount).to.equal(1)
+        expect(onMessageSpy.lastCall.args[0]).to.eqls(payload)
+    })
+
+    it('throws error if you try to unsubscribe with an unknown id', async () => {
+        const pubsub = new RascalPubSub({ brokerConfig })
+        try {
+            expect(await pubsub.unsubscribe(90)).to.throw("There is not a subscription with the id '90'")
+        } catch {}
+    })
+
+    it('allows use of a custom reviver', async () => {
+        const reviver = spy((key, value) => {
+            const isISO8601Z = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2}(?:\.\d*)?)Z$/
+            if (typeof value === 'string' && isISO8601Z.test(value)) {
+                const tempDateNumber = Date.parse(value)
+                if (!isNaN(tempDateNumber)) {
+                    return new Date(tempDateNumber)
+                }
+            }
+            return value
+        })
+        const payload = new Date()
+        const onMessageSpy = spy(() => null)
+
+        // setup pubsub
+        const pubsub = new RascalPubSub({ brokerConfig, reviver })
+        // subscribe
+        await pubsub.subscribe('Posts', onMessageSpy)
+        await pubsub.publish('Posts', payload)
+        // cleanup
+        await pubsub.close()
+
+        // asserts
+        expect(onMessageSpy.lastCall.args[0]).to.eqls(payload)
+        expect(reviver.callCount).to.equal(1)
     })
 })
 
 describe('PubSubAsyncIterator', () => {
     it('should expose valid asyncItrator for a specific event', () => {
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-        const eventName = 'posts'
+        const pubsub = new RascalPubSub({ brokerConfig })
+        const eventName = 'Posts'
         const iterator = pubsub.asyncIterator(eventName)
 
         expect(iterator).to.exist
@@ -252,12 +286,13 @@ describe('PubSubAsyncIterator', () => {
     })
 
     it('should trigger event on asyncIterator when published', (done) => {
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-        const eventName = 'posts'
-        const iterator = pubsub.asyncIterator([eventName])
+        const pubsub = new RascalPubSub({ brokerConfig })
+        const eventName = 'Posts'
+        const iterator = pubsub.asyncIterator(eventName)
 
         iterator.next().then((result) => {
+            pubsub.close()
+
             expect(result).to.exist
             expect(result.value).to.exist
             expect(result.done).to.exist
@@ -266,46 +301,45 @@ describe('PubSubAsyncIterator', () => {
 
         setTimeout(() => {
             pubsub.publish(eventName, { test: true })
-        }, 0)
+        }, 50)
     })
 
     it('should not trigger event on asyncIterator when publishing other events', (done) => {
-        const pubsub = new RascalPubSub()
-        mock(pubsub, 'getBroker').resolveWith(mockRascalBroker)
-        const iterator = pubsub.asyncIterator('posts')
+        const pubsub = new RascalPubSub({ brokerConfig })
+        const iterator = pubsub.asyncIterator('Posts')
         const triggerSpy = spy(() => undefined)
 
         iterator.next().then(triggerSpy)
 
         setTimeout(async () => {
-            await pubsub.publish('author', 'testing')
+            await pubsub.publish('Authors', 'testing')
+            await pubsub.close()
             expect(triggerSpy.callCount).to.equal(0)
             done()
-        }, 0)
+        }, 50)
     })
 
     it('should allow registering to multiple events', (done) => {
-        const pubSub = new RascalPubSub()
-        mock(pubSub, 'getBroker').resolveWith(mockRascalBroker)
-        const eventName = 'test2'
-        const iterator = pubSub.asyncIterator(['test', 'test2'])
-        const triggerSpy = spy(() => undefined)
+        const pubSub = new RascalPubSub({ brokerConfig })
+        const iterator = pubSub.asyncIterator(['Authors', 'Posts'])
 
-        iterator.next().then(() => {
-            triggerSpy()
-            expect(triggerSpy.callCount).to.be.gte(1)
-            done()
+        iterator.next().then((result) => {
+            expect(result).to.exist
+            expect(result).to.exist
+            expect(result.value).to.exist
+            expect(result.done).to.exist
+
+            pubSub.close().then(() => done())
         })
 
         setTimeout(() => {
-            pubSub.publish(eventName, { test: true })
-        }, 0)
+            pubSub.publish('Authors', { test: true })
+        }, 250)
     })
 
     it('should not trigger event on asyncIterator already returned', (done) => {
-        const pubSub = new RascalPubSub()
-        mock(pubSub, 'getBroker').resolveWith(mockRascalBroker)
-        const eventName = 'test'
+        const pubSub = new RascalPubSub({ brokerConfig })
+        const eventName = 'Posts'
         const iterator = pubSub.asyncIterator<any>(eventName)
 
         iterator.next().then((result) => {
@@ -333,6 +367,6 @@ describe('PubSubAsyncIterator', () => {
                 iterator.return()
                 pubSub.publish(eventName, { test: true })
             })
-        }, 0)
+        }, 50)
     })
 })
